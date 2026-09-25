@@ -13,6 +13,7 @@
       --line: #343c2f;
       --ok: #c9e38a;
       --bad: #ffb4a8;
+      --warn: #f0d48a;
     }
     * { box-sizing: border-box; }
     body {
@@ -26,16 +27,18 @@
       margin: 0 auto;
       padding: 20px 16px 48px;
     }
-    h1 { font-size: 22px; font-weight: 600; margin: 0 0 16px; }
+    h1 { font-size: 22px; font-weight: 600; margin: 0 0 8px; }
+    h2 { font-size: 18px; font-weight: 600; margin: 28px 0 12px; }
+    .hint { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
     .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
     label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-    input {
+    input[type="text"], input[type="password"], input:not([type]) {
       background: var(--panel);
       color: var(--ink);
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 8px 10px;
-      min-width: 160px;
+      min-width: 140px;
     }
     button {
       border: 0;
@@ -43,12 +46,17 @@
       padding: 10px 14px;
       cursor: pointer;
       font: inherit;
+      background: #2a3326;
+      color: var(--ink);
     }
-    #start { background: var(--ok); color: #1a220f; }
+    button:disabled { opacity: 0.4; cursor: default; }
+    #start, #resume { background: var(--ok); color: #1a220f; }
+    #pause { background: var(--warn); color: #241c0c; }
     #stop { background: #5a4038; color: var(--ink); }
-    .status { color: var(--muted); font-size: 14px; margin: 8px 0 16px; }
+    .status { color: var(--muted); font-size: 14px; margin: 8px 0; }
     .status.bad { color: var(--bad); }
-    .grid { display: grid; grid-template-columns: 180px 1fr; gap: 16px; }
+    .status strong { color: var(--ink); font-weight: 600; }
+    .grid { display: grid; grid-template-columns: 220px 1fr; gap: 16px; }
     @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
     .card {
       background: var(--panel);
@@ -59,30 +67,44 @@
     img.qr { width: 160px; height: 160px; background: #fff; border-radius: 8px; }
     .zh { font-size: 18px; margin-bottom: 8px; }
     .en { font-size: 26px; line-height: 1.35; }
-    .hist { margin-top: 16px; font-size: 14px; color: var(--muted); max-height: 280px; overflow: auto; }
+    .hist { margin-top: 8px; font-size: 14px; color: var(--muted); max-height: 280px; overflow: auto; }
     .hist div { padding: 6px 0; border-bottom: 1px solid var(--line); }
+    .when { font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 6px 4px; vertical-align: top; word-break: break-word; }
+    th { color: var(--muted); font-weight: 600; }
+    .check { display: flex; align-items: center; gap: 6px; min-height: 38px; }
+    .check input { min-width: 0; }
+    #qrlink { font-size: 13px; word-break: break-all; color: var(--muted); min-height: 1.2em; }
+    form.row input[type="text"] { flex: 1; }
   </style>
 </head>
 <body>
   <main>
     <h1>課堂主持</h1>
+    <p class="hint">請使用 Chrome，並允許麥克風。語音辨識只在這台瀏覽器進行。</p>
     <div class="row">
       <div>
         <label for="room">房間</label>
-        <input id="room" value="tea930" />
+        <input id="room" type="text" autocomplete="off" />
       </div>
       <div>
         <label for="token">Host token</label>
         <input id="token" type="password" autocomplete="off" />
       </div>
       <button id="start" type="button">開始收音</button>
+      <button id="pause" type="button">暫停</button>
+      <button id="resume" type="button">繼續</button>
       <button id="stop" type="button">停止</button>
     </div>
-    <div id="status" class="status">尚未連線。請用 Chrome，並允許麥克風。</div>
+    <p id="micLine" class="status">狀態：<strong id="micState">已停止</strong></p>
+    <p id="connLine" class="status">連線：<strong id="connState">未連線</strong> · 聽眾 <strong id="listeners">0</strong></p>
+    <p id="error" class="status bad" hidden></p>
+    <p id="restartNote" class="status bad" hidden>伺服器重啟，現場紀錄已清空，請重新開始</p>
     <div class="grid">
       <div class="card">
-        <div>聽眾 <span id="listeners">0</span></div>
-        <p id="qrlink" style="font-size:13px;word-break:break-all;color:var(--muted)"></p>
+        <p id="qrlink"></p>
+        <button id="copyUrl" type="button">複製學生網址</button>
         <img id="qr" class="qr" alt="room QR" hidden />
       </div>
       <div class="card">
@@ -90,122 +112,586 @@
         <div class="en" id="en">（等待英文）</div>
       </div>
     </div>
+    <h2>本場紀錄</h2>
+    <div class="row">
+      <button id="downloadTxt" type="button">下載 .txt</button>
+      <button id="downloadJson" type="button">下載 .json</button>
+    </div>
     <div class="hist" id="hist"></div>
+
+    <h2>詞庫</h2>
+    <p id="termsEmpty">尚無詞條，請自行新增</p>
+    <div id="terms"></div>
+    <form id="glossForm" class="row" autocomplete="off">
+      <div>
+        <label for="g-zh">zh</label>
+        <input id="g-zh" type="text" autocomplete="off" />
+      </div>
+      <div>
+        <label for="g-en">en</label>
+        <input id="g-en" type="text" autocomplete="off" />
+      </div>
+      <div>
+        <label for="g-aliases">aliases（逗號分開）</label>
+        <input id="g-aliases" type="text" autocomplete="off" />
+      </div>
+      <div>
+        <label for="g-cat">cat</label>
+        <input id="g-cat" type="text" autocomplete="off" />
+      </div>
+      <label class="check" for="g-lock">
+        <input id="g-lock" type="checkbox" checked />
+        lock
+      </label>
+      <input id="g-original" type="hidden" />
+      <button id="saveTerm" type="submit">新增</button>
+      <button id="cancelEdit" type="button">取消</button>
+    </form>
+    <p id="glossMsg" class="status bad" hidden></p>
   </main>
   <script>
     const $ = (id) => document.getElementById(id);
+    const MIN_FINAL_CHARS = 2;
     const params = new URLSearchParams(location.search);
-    if (params.get("room")) $("room").value = params.get("room");
-    if (params.get("token")) $("token").value = params.get("token");
-    else $("token").value = sessionStorage.getItem("hostToken") || "";
 
-    let rec = null;
+    let mode = "stopped";
     let ws = null;
-    let live = false;
+    let rec = null;
+    let activeGen = 0;
+    let connectedOnce = false;
+    let connectPromise = null;
+    let reconnectTimer = null;
+    let retry = 0;
+    let lastFinalText = "";
+    let lastFinalAt = 0;
+    let pendingFinals = [];
+    let lines = [];
+    let currentTerms = [];
 
-    function setStatus(msg, bad) {
-      $("status").textContent = msg;
-      $("status").className = "status" + (bad ? " bad" : "");
+    function lsGet(key) {
+      try { return localStorage.getItem(key) || ""; } catch (_) { return ""; }
     }
-
+    function lsSet(key, value) {
+      try { localStorage.setItem(key, value); } catch (_) {}
+    }
+    function roomValue() {
+      return (($("room").value || "").trim() || "tea930").slice(0, 32);
+    }
+    function persist() {
+      lsSet("hostToken", ($("token").value || "").trim());
+      lsSet("hostRoom", roomValue());
+    }
+    function esc(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      }[ch]));
+    }
+    function showError(msg) {
+      const el = $("error");
+      el.hidden = !msg;
+      el.textContent = msg || "";
+    }
+    function setGlossMsg(msg) {
+      const el = $("glossMsg");
+      el.hidden = !msg;
+      el.textContent = msg || "";
+    }
+    function setConn(label) {
+      $("connState").textContent = label;
+    }
+    function setMode(next) {
+      mode = next;
+      const label = next === "listening" ? "收聽中" : next === "paused" ? "已暫停" : "已停止";
+      $("micState").textContent = label;
+      $("start").disabled = next === "listening";
+      $("pause").disabled = next !== "listening";
+      $("resume").disabled = next !== "paused";
+      $("stop").disabled = next === "stopped";
+    }
+    function studentUrl() {
+      return location.origin + "/r/" + encodeURIComponent(roomValue());
+    }
+    function showStudentUrl(url) {
+      $("qrlink").textContent = url;
+      $("qr").src = "https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=" + encodeURIComponent(url);
+      $("qr").hidden = false;
+    }
     function wsUrl() {
       const proto = location.protocol === "https:" ? "wss" : "ws";
-      const room = encodeURIComponent($("room").value.trim() || "tea930");
-      const token = encodeURIComponent($("token").value.trim());
-      return `${proto}://${location.host}/ws/host?room=${room}&token=${token}`;
+      const room = encodeURIComponent(roomValue());
+      const token = encodeURIComponent(($("token").value || "").trim());
+      return proto + "://" + location.host + "/ws/host?room=" + room + "&token=" + token;
     }
-
+    function acceptFinal(text) {
+      const cleaned = (text || "").trim();
+      if (cleaned.length < MIN_FINAL_CHARS) return false;
+      const now = Date.now();
+      if (cleaned === lastFinalText && now - lastFinalAt < 1000) return false;
+      lastFinalText = cleaned;
+      lastFinalAt = now;
+      return true;
+    }
     function sendZh(text, final) {
-      if (!ws || ws.readyState !== 1 || !text) return;
-      ws.send(JSON.stringify({ type: "zh", text, final }));
-    }
-
-    function connect() {
-      return new Promise((resolve, reject) => {
-        ws = new WebSocket(wsUrl());
-        ws.onopen = () => resolve();
-        ws.onerror = () => reject(new Error("WebSocket 連線失敗"));
-        ws.onclose = () => {
-          if (live) setStatus("連線中斷", true);
-        };
-        ws.onmessage = (ev) => {
-          const data = JSON.parse(ev.data);
-          if (data.type === "hello" || data.type === "room") {
-            $("listeners").textContent = data.listeners ?? 0;
-            if (data.qr_url) {
-              const abs = new URL(data.qr_url, location.origin).href;
-              $("qrlink").textContent = abs;
-              $("qr").src = "https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=" + encodeURIComponent(abs);
-              $("qr").hidden = false;
-            }
-            if (data.history) renderHist(data.history);
-          }
-          if (data.type === "partial") $("zh").textContent = data.zh || "";
-          if (data.type === "final") {
-            $("zh").textContent = data.zh || "";
-            $("en").textContent = data.en || "";
-          }
-        };
-      });
-    }
-
-    function renderHist(items) {
-      $("hist").innerHTML = (items || []).slice().reverse().map((it) =>
-        `<div><div>${it.zh || ""}</div><div>${it.en || ""}</div></div>`
-      ).join("");
-    }
-
-    function Speech() {
-      return window.SpeechRecognition || window.webkitSpeechRecognition;
-    }
-
-    $("start").onclick = async () => {
-      const Ctor = Speech();
-      if (!Ctor) {
-        setStatus("這個瀏覽器沒有 Web Speech API，請改用 Chrome 桌面版。", true);
+      if (mode !== "listening") return;
+      const cleaned = (text || "").trim();
+      if (!cleaned) return;
+      const msg = { type: "zh", text: cleaned, final: !!final };
+      if (!ws || ws.readyState !== 1) {
+        if (final) pendingFinals.push(msg);
         return;
       }
-      sessionStorage.setItem("hostToken", $("token").value.trim());
+      ws.send(JSON.stringify(msg));
+    }
+    function flushPending() {
+      if (mode !== "listening" || !ws || ws.readyState !== 1) {
+        if (mode !== "listening") pendingFinals = [];
+        return;
+      }
+      const batch = pendingFinals;
+      pendingFinals = [];
+      for (const msg of batch) {
+        if (mode !== "listening") return;
+        ws.send(JSON.stringify(msg));
+      }
+    }
+    function rememberLine(data) {
+      if (!data) return;
+      const row = {
+        id: data.id || "",
+        t: data.t || Date.now(),
+        zh: data.zh || "",
+        en: data.en || ""
+      };
+      if (!row.zh && !row.en) return;
+      if (row.id && lines.some((item) => item.id === row.id)) return;
+      lines.push(row);
+    }
+    function renderHist() {
+      $("hist").innerHTML = lines.slice().reverse().map((item) => {
+        const when = item.t ? new Date(item.t).toLocaleString() : "";
+        return "<div><div class=\"when\">" + esc(when) + "</div><div>" + esc(item.zh) + "</div><div>" + esc(item.en) + "</div></div>";
+      }).join("");
+    }
+    function mergeServer(history) {
+      for (const item of history) rememberLine(item);
+    }
+    function applyHello(data) {
+      const serverHist = Array.isArray(data.history) ? data.history : [];
+      if (connectedOnce && serverHist.length === 0 && lines.length > 0) {
+        $("restartNote").hidden = false;
+      } else if (serverHist.length) {
+        mergeServer(serverHist);
+        renderHist();
+      }
+      connectedOnce = true;
+      if (data.qr_url) showStudentUrl(new URL(data.qr_url, location.origin).href);
+      else showStudentUrl(studentUrl());
+      setConn("已連線");
+    }
+    function onWsMessage(ev) {
+      let data;
+      try { data = JSON.parse(ev.data); } catch (_) { return; }
+      if (!data || typeof data !== "object") return;
+      if (data.type === "hello" || data.type === "room") {
+        $("listeners").textContent = String(data.listeners ?? 0);
+      }
+      if (data.type === "hello") applyHello(data);
+      if (data.type === "partial" && mode === "listening") $("zh").textContent = data.zh || "";
+      if (data.type === "final") {
+        $("zh").textContent = data.zh || "";
+        $("en").textContent = data.en || "";
+        rememberLine(data);
+        renderHist();
+      }
+    }
+    function scheduleReconnect() {
+      if (mode === "stopped" || reconnectTimer) return;
+      const wait = Math.min(5000, 400 * (2 ** retry));
+      retry += 1;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (mode === "stopped") return;
+        connect().then(() => { retry = 0; }).catch(() => { scheduleReconnect(); });
+      }, wait);
+    }
+    function connect() {
+      if (ws && ws.readyState === 1) return Promise.resolve();
+      if (connectPromise) return connectPromise;
+      setConn("連線中");
+      connectPromise = new Promise((resolve, reject) => {
+        const sock = new WebSocket(wsUrl());
+        ws = sock;
+        let settled = false;
+        sock.onopen = () => {
+          if (settled) return;
+          settled = true;
+          connectPromise = null;
+          retry = 0;
+          setConn("已連線");
+          if (mode === "listening") flushPending();
+          else pendingFinals = [];
+          resolve();
+        };
+        sock.onerror = () => {
+          if (settled) return;
+          settled = true;
+          connectPromise = null;
+          reject(new Error("WebSocket 連線失敗"));
+        };
+        sock.onclose = () => {
+          if (ws === sock) ws = null;
+          if (!settled) {
+            settled = true;
+            connectPromise = null;
+            reject(new Error("WebSocket 連線失敗"));
+            return;
+          }
+          if (mode === "stopped") {
+            setConn("未連線");
+            return;
+          }
+          setConn("連線中斷");
+          scheduleReconnect();
+        };
+        sock.onmessage = onWsMessage;
+      });
+      return connectPromise;
+    }
+    function haltRec() {
+      activeGen += 1;
+      const current = rec;
+      rec = null;
+      if (!current) return;
+      current.onresult = null;
+      current.onend = null;
+      current.onerror = null;
+      try { current.abort(); } catch (_) {
+        try { current.stop(); } catch (_) {}
+      }
+    }
+    function handleResult(event, gen) {
+      if (mode !== "listening" || gen !== activeGen) return;
+      let interim = "";
+      const results = event.results;
+      for (let i = event.resultIndex; i < results.length; i++) {
+        const piece = String((results[i][0] && results[i][0].transcript) || "").trim();
+        if (!piece) continue;
+        if (results[i].isFinal) {
+          if (!acceptFinal(piece)) continue;
+          sendZh(piece, true);
+        } else {
+          interim += piece;
+        }
+      }
+      if (interim && mode === "listening" && gen === activeGen) {
+        $("zh").textContent = interim;
+        if (interim.length >= MIN_FINAL_CHARS) sendZh(interim, false);
+      }
+    }
+    function handleRecError(event, gen) {
+      if (gen !== activeGen) return;
+      const code = (event && event.error) || "";
+      if (code === "no-speech" || code === "aborted") return;
+      if (code === "not-allowed" || code === "service-not-allowed") {
+        setMode("stopped");
+        haltRec();
+        showError("麥克風被拒絕。請在瀏覽器設定允許。");
+        return;
+      }
+      if (code === "audio-capture") {
+        setMode("stopped");
+        haltRec();
+        showError("找不到麥克風。");
+        return;
+      }
+      showError(code ? ("辨識錯誤：" + code) : "辨識錯誤");
+      if (code === "network") {
+        setMode("paused");
+        haltRec();
+      }
+    }
+    function buildRec(Ctor) {
+      const gen = ++activeGen;
+      const recognition = new Ctor();
+      recognition.lang = "zh-TW";
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.onresult = (event) => handleResult(event, gen);
+      recognition.onerror = (event) => handleRecError(event, gen);
+      recognition.onend = () => {
+        if (mode !== "listening" || gen !== activeGen) return;
+        setTimeout(() => {
+          if (mode !== "listening" || gen !== activeGen) return;
+          try { recognition.start(); }
+          catch (_) {
+            if (mode !== "listening" || gen !== activeGen) return;
+            try {
+              rec = buildRec(Ctor);
+              rec.start();
+            } catch (_) {}
+          }
+        }, 250);
+      };
+      return recognition;
+    }
+    function speechCtor() {
+      return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+    }
+    let starting = false;
+    async function startListening() {
+      if (mode === "listening" || starting) return;
+      showError("");
+      const Ctor = speechCtor();
+      if (!Ctor) {
+        showError("這個瀏覽器沒有 Web Speech API，請改用 Chrome。");
+        setMode("stopped");
+        return;
+      }
+      starting = true;
+      $("start").disabled = true;
+      $("resume").disabled = true;
+      persist();
       try {
         await connect();
+        if (mode === "stopped") pendingFinals = [];
+        setMode("listening");
+        haltRec();
+        rec = buildRec(Ctor);
+        try { rec.start(); }
+        catch (_) {
+          setMode("stopped");
+          haltRec();
+          showError("無法開始收音");
+        }
       } catch (err) {
-        setStatus(err.message, true);
+        showError((err && err.message) || "WebSocket 連線失敗");
+        setConn("連線中斷");
+        setMode(mode === "listening" ? "listening" : mode);
+      } finally {
+        starting = false;
+        setMode(mode);
+      }
+    }
+    function pauseListening() {
+      if (mode !== "listening") return;
+      setMode("paused");
+      pendingFinals = [];
+      haltRec();
+    }
+    function stopListening() {
+      if (mode === "stopped") return;
+      setMode("stopped");
+      pendingFinals = [];
+      haltRec();
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      const sock = ws;
+      ws = null;
+      if (sock && sock.readyState === 1) {
+        try { sock.send(JSON.stringify({ type: "stop" })); } catch (_) {}
+      }
+      if (sock) {
+        try { sock.close(); } catch (_) {}
+      }
+      setConn("未連線");
+    }
+    function exportRows() {
+      return lines.map((item) => ({
+        t: item.t ?? null,
+        time: item.t ? new Date(item.t).toISOString() : "",
+        zh: item.zh || "",
+        en: item.en || ""
+      }));
+    }
+    function fileRoom() {
+      return roomValue().replace(/[^\w.-]+/g, "_");
+    }
+    function download(filename, content, mime) {
+      const blob = new Blob([content], { type: mime });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1500);
+    }
+    function downloadTxt() {
+      const parts = exportRows().map((row) => row.time + "\n" + row.zh + "\n" + row.en);
+      const body = parts.length ? parts.join("\n\n") + "\n" : "";
+      download("transcript-" + fileRoom() + ".txt", body, "text/plain;charset=utf-8");
+    }
+    function downloadJson() {
+      const payload = { room: roomValue(), lines: exportRows() };
+      download("transcript-" + fileRoom() + ".json", JSON.stringify(payload, null, 2) + "\n", "application/json");
+    }
+    function splitAliases(raw) {
+      return String(raw || "").split(/[,，、;\n]/).map((part) => part.trim()).filter(Boolean);
+    }
+    function renderTerms(terms) {
+      currentTerms = terms || [];
+      const empty = $("termsEmpty");
+      const host = $("terms");
+      if (!currentTerms.length) {
+        host.innerHTML = "";
+        empty.hidden = false;
         return;
       }
-      rec = new Ctor();
-      rec.lang = "zh-TW";
-      rec.continuous = true;
-      rec.interimResults = true;
-      rec.onresult = (event) => {
-        let interim = "";
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const piece = event.results[i][0].transcript.trim();
-          if (!piece) continue;
-          if (event.results[i].isFinal) sendZh(piece, true);
-          else interim += piece;
-        }
-        if (interim) {
-          $("zh").textContent = interim;
-          sendZh(interim, false);
-        }
+      empty.hidden = true;
+      const rows = currentTerms.map((item) => {
+        const aliases = (item.aliases || []).join(", ");
+        const zh = esc(item.zh || "");
+        return "<tr><td>" + zh + "</td><td>" + esc(item.en || "") + "</td><td>" + esc(aliases) + "</td><td>" + (item.lock ? "true" : "false") + "</td><td>" + esc(item.cat || "") + "</td><td><button type=\"button\" data-act=\"edit\" data-zh=\"" + zh + "\">編輯</button> <button type=\"button\" data-act=\"delete\" data-zh=\"" + zh + "\">刪除</button></td></tr>";
+      }).join("");
+      host.innerHTML = "<table><thead><tr><th>zh</th><th>en</th><th>aliases</th><th>lock</th><th>cat</th><th></th></tr></thead><tbody>" + rows + "</tbody></table>";
+    }
+    async function reloadGlossary() {
+      const res = await fetch("/api/glossary");
+      if (!res.ok) {
+        setGlossMsg("詞庫讀取失敗");
+        return;
+      }
+      const data = await res.json();
+      renderTerms(Array.isArray(data.terms) ? data.terms : []);
+    }
+    function clearGlossForm() {
+      $("g-zh").value = "";
+      $("g-en").value = "";
+      $("g-aliases").value = "";
+      $("g-cat").value = "";
+      $("g-lock").checked = true;
+      $("g-original").value = "";
+      $("saveTerm").textContent = "新增";
+    }
+    function beginEdit(zh) {
+      const item = currentTerms.find((term) => term.zh === zh);
+      if (!item) return;
+      $("g-zh").value = item.zh || "";
+      $("g-en").value = item.en || "";
+      $("g-aliases").value = (item.aliases || []).join(", ");
+      $("g-cat").value = item.cat || "";
+      $("g-lock").checked = !!item.lock;
+      $("g-original").value = item.zh || "";
+      $("saveTerm").textContent = "儲存";
+      setGlossMsg("");
+    }
+    async function removeTerm(zh) {
+      if (!zh) return;
+      if (!window.confirm("刪除這個詞條？")) return;
+      persist();
+      const token = ($("token").value || "").trim();
+      if (!token) {
+        setGlossMsg("請填寫 token");
+        return;
+      }
+      const res = await fetch("/api/glossary?zh=" + encodeURIComponent(zh), {
+        method: "DELETE",
+        headers: { "X-Host-Token": token }
+      });
+      if (!res.ok) {
+        setGlossMsg("刪除失敗");
+        return;
+      }
+      if ($("g-original").value === zh) clearGlossForm();
+      setGlossMsg("");
+      await reloadGlossary();
+    }
+    async function saveTerm(event) {
+      event.preventDefault();
+      persist();
+      const zh = ($("g-zh").value || "").trim();
+      if (!zh) {
+        setGlossMsg("請填寫 zh");
+        return;
+      }
+      const token = ($("token").value || "").trim();
+      if (!token) {
+        setGlossMsg("請填寫 token");
+        return;
+      }
+      const headers = { "Content-Type": "application/json", "X-Host-Token": token };
+      const body = {
+        zh: zh,
+        en: ($("g-en").value || "").trim(),
+        aliases: splitAliases($("g-aliases").value),
+        lock: !!$("g-lock").checked,
+        cat: ($("g-cat").value || "").trim()
       };
-      rec.onerror = (ev) => {
-        if (ev.error === "not-allowed") setStatus("麥克風被拒絕。請在瀏覽器設定允許。", true);
-        else setStatus("辨識錯誤：" + ev.error, true);
-      };
-      rec.onend = () => { if (live) rec.start(); };
-      live = true;
-      rec.start();
-      setStatus("收音中");
-    };
+      const res = await fetch("/api/glossary", {
+        method: "POST",
+        headers: headers,
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) {
+        setGlossMsg("儲存失敗");
+        return;
+      }
+      const original = ($("g-original").value || "").trim();
+      if (original && original !== zh) {
+        const removed = await fetch("/api/glossary?zh=" + encodeURIComponent(original), {
+          method: "DELETE",
+          headers: { "X-Host-Token": token }
+        });
+        if (!removed.ok) {
+          setGlossMsg("儲存失敗");
+          await reloadGlossary();
+          return;
+        }
+      }
+      clearGlossForm();
+      setGlossMsg("");
+      await reloadGlossary();
+    }
 
-    $("stop").onclick = () => {
-      live = false;
-      if (rec) { try { rec.stop(); } catch (_) {} }
-      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "stop" }));
-      if (ws) ws.close();
-      setStatus("已停止");
+    const roomQuery = params.get("room");
+    const tokenQuery = params.get("token");
+    if (roomQuery) $("room").value = roomQuery;
+    else $("room").value = lsGet("hostRoom") || "tea930";
+    if (tokenQuery) $("token").value = tokenQuery;
+    else $("token").value = lsGet("hostToken");
+    persist();
+    setMode("stopped");
+    setConn("未連線");
+    showStudentUrl(studentUrl());
+
+    $("room").addEventListener("input", () => {
+      persist();
+      if (mode === "stopped") showStudentUrl(studentUrl());
+    });
+    $("token").addEventListener("input", persist);
+    $("start").onclick = () => { startListening(); };
+    $("resume").onclick = () => { startListening(); };
+    $("pause").onclick = () => { pauseListening(); };
+    $("stop").onclick = () => { stopListening(); };
+    $("copyUrl").onclick = async () => {
+      const url = ($("qrlink").textContent || "").trim();
+      if (!url) return;
+      try {
+        await navigator.clipboard.writeText(url);
+        $("copyUrl").textContent = "已複製";
+        setTimeout(() => { $("copyUrl").textContent = "複製學生網址"; }, 1200);
+      } catch (_) {
+        showError("無法複製，請手動選取網址");
+      }
     };
+    $("downloadTxt").onclick = () => { downloadTxt(); };
+    $("downloadJson").onclick = () => { downloadJson(); };
+    $("glossForm").addEventListener("submit", (event) => { saveTerm(event); });
+    $("cancelEdit").onclick = () => { clearGlossForm(); setGlossMsg(""); };
+    $("terms").addEventListener("click", (event) => {
+      const button = event.target && event.target.closest ? event.target.closest("button") : null;
+      if (!button) return;
+      const zh = button.getAttribute("data-zh") || "";
+      if (button.getAttribute("data-act") === "edit") beginEdit(zh);
+      if (button.getAttribute("data-act") === "delete") removeTerm(zh);
+    });
+    reloadGlossary().catch(() => { setGlossMsg("詞庫讀取失敗"); });
   </script>
 </body>
 </html>

@@ -11,8 +11,8 @@ GLOSSARY_PATH = Path(os.getenv("GLOSSARY_PATH", "data/glossary.json"))
 
 # Minimal mapping used only when matching aliases; not a term list.
 _SIMP_TO_TRAD = str.maketrans(
-    "会学观经数开静禅语头打坐行话"
-    "會學觀經數開靜禪語頭打坐行話"
+    "会学观经数开静禅语头打坐行话",
+    "會學觀經數開靜禪語頭打坐行話",
 )
 
 
@@ -89,6 +89,20 @@ def upsert(item: dict[str, Any]) -> dict[str, Any]:
             break
     if not found:
         data["terms"].append(incoming)
+    data["updated_at"] = _now()
+    save(data)
+    return data
+
+
+def delete_term(zh: str) -> dict[str, Any]:
+    key = str(zh or "").strip()
+    if not key:
+        raise ValueError("zh is required")
+    data = load()
+    kept = [item for item in data["terms"] if str(item.get("zh") or "").strip() != key]
+    if len(kept) == len(data["terms"]):
+        raise KeyError(key)
+    data["terms"] = kept
     data["updated_at"] = _now()
     save(data)
     return data

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 import uuid
@@ -8,8 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -131,6 +132,54 @@ async def get_glossary() -> dict[str, Any]:
 async def post_glossary(body: GlossaryIn, x_host_token: str | None = Header(default=None)) -> dict[str, Any]:
     check_host_token(x_host_token)
     return glossary.upsert(body.model_dump())
+
+
+@app.delete("/api/glossary")
+async def delete_glossary(
+    request: Request,
+    zh: str | None = None,
+    x_host_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    check_host_token(x_host_token)
+    key = (zh or "").strip()
+    if not key:
+        raw = await request.body()
+        if raw:
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict):
+                key = str(payload.get("zh") or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="zh is required")
+    try:
+        return glossary.delete_term(key)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/room/{room_id}/export")
+async def export_room(
+    room_id: str,
+    fmt: str = "json",
+    token: str | None = None,
+    x_host_token: str | None = Header(default=None),
+) -> Any:
+    check_host_token(x_host_token or token)
+    room = get_room(room_id)
+    rows = [
+        {"t": item.get("t"), "zh": item.get("zh") or "", "en": item.get("en") or ""}
+        for item in room.history
+    ]
+    if fmt == "txt":
+        body = "\n".join(f"{row['t']}\t{row['zh']}\t{row['en']}" for row in rows)
+        if body:
+            body += "\n"
+        return PlainTextResponse(body, media_type="text/plain; charset=utf-8")
+    return {"room": room.id, "lines": rows}
 
 
 @app.post("/api/push")
