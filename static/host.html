@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Host · Live Translate</title>
+  <style>
+    :root {
+      --bg: #11140f;
+      --panel: #1b2118;
+      --ink: #f4f1e8;
+      --muted: #b7b09f;
+      --line: #343c2f;
+      --ok: #c9e38a;
+      --bad: #ffb4a8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Iwanami Mincho", "Source Han Serif TC", "Noto Serif TC", serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 20px 16px 48px;
+    }
+    h1 { font-size: 22px; font-weight: 600; margin: 0 0 16px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    input {
+      background: var(--panel);
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      min-width: 160px;
+    }
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font: inherit;
+    }
+    #start { background: var(--ok); color: #1a220f; }
+    #stop { background: #5a4038; color: var(--ink); }
+    .status { color: var(--muted); font-size: 14px; margin: 8px 0 16px; }
+    .status.bad { color: var(--bad); }
+    .grid { display: grid; grid-template-columns: 180px 1fr; gap: 16px; }
+    @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+    }
+    img.qr { width: 160px; height: 160px; background: #fff; border-radius: 8px; }
+    .zh { font-size: 18px; margin-bottom: 8px; }
+    .en { font-size: 26px; line-height: 1.35; }
+    .hist { margin-top: 16px; font-size: 14px; color: var(--muted); max-height: 280px; overflow: auto; }
+    .hist div { padding: 6px 0; border-bottom: 1px solid var(--line); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>課堂主持</h1>
+    <div class="row">
+      <div>
+        <label for="room">房間</label>
+        <input id="room" value="tea930" />
+      </div>
+      <div>
+        <label for="token">Host token</label>
+        <input id="token" type="password" autocomplete="off" />
+      </div>
+      <button id="start" type="button">開始收音</button>
+      <button id="stop" type="button">停止</button>
+    </div>
+    <div id="status" class="status">尚未連線。請用 Chrome，並允許麥克風。</div>
+    <div class="grid">
+      <div class="card">
+        <div>聽眾 <span id="listeners">0</span></div>
+        <p id="qrlink" style="font-size:13px;word-break:break-all;color:var(--muted)"></p>
+        <img id="qr" class="qr" alt="room QR" hidden />
+      </div>
+      <div class="card">
+        <div class="zh" id="zh">（等待中文）</div>
+        <div class="en" id="en">（等待英文）</div>
+      </div>
+    </div>
+    <div class="hist" id="hist"></div>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const params = new URLSearchParams(location.search);
+    if (params.get("room")) $("room").value = params.get("room");
+    if (params.get("token")) $("token").value = params.get("token");
+    else $("token").value = sessionStorage.getItem("hostToken") || "";
+
+    let rec = null;
+    let ws = null;
+    let live = false;
+
+    function setStatus(msg, bad) {
+      $("status").textContent = msg;
+      $("status").className = "status" + (bad ? " bad" : "");
+    }
+
+    function wsUrl() {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      const room = encodeURIComponent($("room").value.trim() || "tea930");
+      const token = encodeURIComponent($("token").value.trim());
+      return `${proto}://${location.host}/ws/host?room=${room}&token=${token}`;
+    }
+
+    function sendZh(text, final) {
+      if (!ws || ws.readyState !== 1 || !text) return;
+      ws.send(JSON.stringify({ type: "zh", text, final }));
+    }
+
+    function connect() {
+      return new Promise((resolve, reject) => {
+        ws = new WebSocket(wsUrl());
+        ws.onopen = () => resolve();
+        ws.onerror = () => reject(new Error("WebSocket 連線失敗"));
+        ws.onclose = () => {
+          if (live) setStatus("連線中斷", true);
+        };
+        ws.onmessage = (ev) => {
+          const data = JSON.parse(ev.data);
+          if (data.type === "hello" || data.type === "room") {
+            $("listeners").textContent = data.listeners ?? 0;
+            if (data.qr_url) {
+              const abs = new URL(data.qr_url, location.origin).href;
+              $("qrlink").textContent = abs;
+              $("qr").src = "https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=" + encodeURIComponent(abs);
+              $("qr").hidden = false;
+            }
+            if (data.history) renderHist(data.history);
+          }
+          if (data.type === "partial") $("zh").textContent = data.zh || "";
+          if (data.type === "final") {
+            $("zh").textContent = data.zh || "";
+            $("en").textContent = data.en || "";
+          }
+        };
+      });
+    }
+
+    function renderHist(items) {
+      $("hist").innerHTML = (items || []).slice().reverse().map((it) =>
+        `<div><div>${it.zh || ""}</div><div>${it.en || ""}</div></div>`
+      ).join("");
+    }
+
+    function Speech() {
+      return window.SpeechRecognition || window.webkitSpeechRecognition;
+    }
+
+    $("start").onclick = async () => {
+      const Ctor = Speech();
+      if (!Ctor) {
+        setStatus("這個瀏覽器沒有 Web Speech API，請改用 Chrome 桌面版。", true);
+        return;
+      }
+      sessionStorage.setItem("hostToken", $("token").value.trim());
+      try {
+        await connect();
+      } catch (err) {
+        setStatus(err.message, true);
+        return;
+      }
+      rec = new Ctor();
+      rec.lang = "zh-TW";
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.onresult = (event) => {
+        let interim = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const piece = event.results[i][0].transcript.trim();
+          if (!piece) continue;
+          if (event.results[i].isFinal) sendZh(piece, true);
+          else interim += piece;
+        }
+        if (interim) {
+          $("zh").textContent = interim;
+          sendZh(interim, false);
+        }
+      };
+      rec.onerror = (ev) => {
+        if (ev.error === "not-allowed") setStatus("麥克風被拒絕。請在瀏覽器設定允許。", true);
+        else setStatus("辨識錯誤：" + ev.error, true);
+      };
+      rec.onend = () => { if (live) rec.start(); };
+      live = true;
+      rec.start();
+      setStatus("收音中");
+    };
+
+    $("stop").onclick = () => {
+      live = false;
+      if (rec) { try { rec.stop(); } catch (_) {} }
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "stop" }));
+      if (ws) ws.close();
+      setStatus("已停止");
+    };
+  </script>
+</body>
+</html>
