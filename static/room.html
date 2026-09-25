@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Captions</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #0e120c;
+      color: #f6f2e7;
+      font-family: "Iwanami Mincho", "Source Han Serif TC", "Noto Serif TC", Georgia, serif;
+    }
+    main {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding: 8vh 6vw 10vh;
+    }
+    #en {
+      font-size: clamp(28px, 6vw, 64px);
+      line-height: 1.25;
+      font-weight: 600;
+    }
+    #zh {
+      margin-top: 16px;
+      font-size: clamp(16px, 2.6vw, 28px);
+      color: #b8b19e;
+    }
+    #meta {
+      position: fixed;
+      top: 16px;
+      left: 20px;
+      color: #7f7a6c;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div id="meta">尚未開講</div>
+  <main>
+    <div id="en">Waiting for captions.</div>
+    <div id="zh">老師開始收音後，這裡會出現中英字幕。</div>
+  </main>
+  <script>
+    const room = location.pathname.split("/").filter(Boolean)[1] || "tea930";
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const meta = document.getElementById("meta");
+    const en = document.getElementById("en");
+    const zh = document.getElementById("zh");
+
+    function connect() {
+      const ws = new WebSocket(`${proto}://${location.host}/ws/listen?room=${encodeURIComponent(room)}`);
+      ws.onopen = () => { meta.textContent = room + " · connected"; };
+      ws.onclose = () => {
+        meta.textContent = room + " · reconnecting";
+        setTimeout(connect, 1200);
+      };
+      ws.onmessage = (ev) => {
+        const data = JSON.parse(ev.data);
+        if (data.type === "hello") {
+          meta.textContent = room + (data.live ? " · live" : " · waiting");
+          const last = (data.history || []).slice(-1)[0];
+          if (last) {
+            en.textContent = last.en || last.zh || "";
+            zh.textContent = last.zh || "";
+          }
+        }
+        if (data.type === "room") {
+          meta.textContent = room + (data.live ? " · live · " + (data.listeners || 0) : " · waiting");
+        }
+        if (data.type === "partial" && data.zh) zh.textContent = data.zh;
+        if (data.type === "final") {
+          en.textContent = data.en || data.zh || "";
+          zh.textContent = data.zh || "";
+          window.scrollTo(0, document.body.scrollHeight);
+        }
+      };
+    }
+    connect();
+  </script>
+</body>
+</html>
